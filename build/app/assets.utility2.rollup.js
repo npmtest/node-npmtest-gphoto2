@@ -503,9 +503,11 @@ local.templateApidocHtml = '\
              */
                 var result;
                 local.tryCatchOnError(function () {
+                    file = local.path.resolve(options.dir, file);
+                    console.error('apidocCreate - readExample - ' + file);
                     result = '';
                     result = ('\n\n\n\n\n\n\n\n' +
-                        local.fs.readFileSync(local.path.resolve(options.dir, file), 'utf8') +
+                        local.fs.readFileSync(file, 'utf8') +
                         '\n\n\n\n\n\n\n\n').replace((/\r\n*/g), '\n');
                 }, console.error);
                 return result;
@@ -578,7 +580,7 @@ local.templateApidocHtml = '\
             local.objectSetDefault(options, {
                 blacklistDict: { global: global },
                 circularList: [global],
-                exampleFileList: [],
+                exampleDict: {},
                 exampleList: [],
                 html: '',
                 libFileList: [],
@@ -588,19 +590,39 @@ local.templateApidocHtml = '\
                 template: local.templateApidocHtml
             }, 2);
             // init exampleList
-            options.exampleList = options.exampleList.concat(options.exampleFileList.concat(
-                local.fs.readdirSync(options.dir)
-                    .sort()
-                    .filter(function (file) {
-                        return file.indexOf(options.env.npm_package_main) === 0 ||
-                            (/^(?:readme)\b/i).test(file) ||
-                            (/^(?:index|lib|test)\b.*\.js$/i).test(file);
-                    })
-            ).map(readExample))
-                .filter(function (element) {
-                    return element.trim();
-                })
-                .slice(0, 128);
+            [1, 2, 3, 4].forEach(function (depth) {
+                options.exampleList = options.exampleList.concat(
+                    // http://stackoverflow.com
+                    // /questions/4509624/how-to-limit-depth-for-recursive-file-list
+                    // find . -maxdepth 1 -mindepth 1 -name "*.js" -type f
+                    local.child_process.execSync('find "' + options.dir +
+                        '" -maxdepth ' + depth + ' -mindepth ' + depth +
+                        ' -type f | sed -e "s|' + options.dir +
+                        '/||" | grep -iv ' +
+/* jslint-ignore-begin */
+'"\
+/\\.\\|\\(\\b\\|_\\)\\(\
+bower_component\\|\
+coverage\\|\
+git\\|\
+min\\|\
+node_module\\|\
+rollup\\|\
+tmp\\|\
+vendor\\)s\\{0,1\\}\\(\\b\\|_\\)\
+" ' +
+/* jslint-ignore-end */
+                            ' | sort | head -n 4096').toString()
+                        .split('\n')
+                );
+            });
+            options.exampleList = options.exampleList.filter(function (file) {
+                if (options.exampleDict[file]) {
+                    return;
+                }
+                options.exampleDict[file] = true;
+                return true;
+            }).slice(0, 100).map(readExample);
             // init moduleMain
             local.tryCatchOnError(function () {
                 console.error('apidocCreate - requiring ' + options.dir + ' ...');
@@ -683,10 +705,12 @@ coverage\\|\
 doc\\|dist\\|\
 example\\|external\\|\
 fixture\\|\
+git\\|\
 log\\|\
 min\\|mock\\|\
 node_module\\|\
 rollup\\|\
+spec\\|\
 test\\|tmp\\|\
 vendor\\)s\\{0,1\\}\\(\\b\\|_\\)\
 " ' +
@@ -695,7 +719,8 @@ vendor\\)s\\{0,1\\}\\(\\b\\|_\\)\
                         .split('\n')
                 );
             });
-            options.libFileList.some(function (file) {
+            options.ii = 0;
+            options.libFileList.every(function (file) {
                 local.tryCatchOnError(function () {
                     tmp = {};
                     tmp.name = local.path.basename(file)
@@ -718,13 +743,11 @@ vendor\\)s\\{0,1\\}\\(\\b\\|_\\)\
                     if (!(tmp.module && options.circularList.indexOf(tmp.module) < 0)) {
                         return;
                     }
+                    options.ii += 1;
+                    console.error('apidocCreate - libFile - ' + file);
                     module[tmp.name] = tmp.module;
-                    // update exampleList
-                    options.exampleList.push(readExample(file));
-                    console.error('apidocCreate - ' + options.exampleList.length +
-                        '. added libFile ' + file);
                 }, console.error);
-                return options.exampleList.length >= 256;
+                return options.ii <= 100;
             });
             local.apidocModuleDictAdd(options, options.moduleExtraDict);
             Object.keys(options.moduleDict).forEach(function (key) {
@@ -10105,7 +10128,7 @@ local.assetsDict['/assets.readmeCustomOrg.npmdoc.template.md'] = '\
 # npmdoc-{{env.npm_package_name}} \
 \n\
 \n\
-#### api documentation for \
+#### basic api documentation for \
 {{#if env.npm_package_homepage}} \
 [{{env.npm_package_name}} (v{{env.npm_package_version}})]({{env.npm_package_homepage}}) \
 {{#unless env.npm_package_homepage}} \
@@ -12437,9 +12460,9 @@ return Utf8ArrayToStr(bff);
         /*
          * this function will create a persistent dbTableCustomOrg
          */
-            options = local.objectSetDefault(options, { githubOrg: local.env.GITHUB_ORG });
+            options = local.objectSetDefault(options, { customOrg: local.env.GITHUB_ORG });
             options = local.objectSetDefault(options, {
-                name: 'CustomOrg.' + options.githubOrg,
+                name: 'CustomOrg.' + options.customOrg,
                 sizeLimit: 1000,
                 sortDefault: [{
                     fieldName: '_id'
@@ -12459,7 +12482,7 @@ return Utf8ArrayToStr(bff);
         /*
          * this function will query dbTableCustomOrg
          */
-            options = local.objectSetDefault(options, { githubOrg: local.env.GITHUB_ORG });
+            options = local.objectSetDefault(options, { customOrg: local.env.GITHUB_ORG });
             options = local.objectSetDefault(options, {
                 query: { buildStartedAt: { $not: { $gt: new Date(Date.now() - (
                     Number(options.olderThanLast) || 0
@@ -12474,7 +12497,7 @@ return Utf8ArrayToStr(bff);
          * this function will update dbTableCustomOrg with active, public repos
          */
             var count, dbRowList, self;
-            options = local.objectSetDefault(options, { githubOrg: local.env.GITHUB_ORG });
+            options = local.objectSetDefault(options, { customOrg: local.env.GITHUB_ORG });
             local.onNext(options, function (error, data) {
                 switch (options.modeNext) {
                 case 1:
@@ -12567,13 +12590,13 @@ return Utf8ArrayToStr(bff);
                     self.crudSetManyById(dbRowList
                         .filter(function (dbRow) {
                             return dbRow.private === false && dbRow.slug.indexOf(
-                                options.githubOrg + '/node-' + options.githubOrg + '-'
+                                options.customOrg + '/node-' + options.customOrg + '-'
                             ) === 0;
                         })
                         .map(function (dbRow) {
                             data = dbRow.current_build || {};
                             return {
-                                _id: dbRow.name.replace('node-' + options.githubOrg + '-', ''),
+                                _id: dbRow.name.replace('node-' + options.customOrg + '-', ''),
                                 active: dbRow.active,
                                 buildDuration: data.duration,
                                 buildFinishedAt: data.finished_at,
@@ -12613,9 +12636,9 @@ return Utf8ArrayToStr(bff);
         /*
          * this function will try to determine if the env-key is sensitive
          */
-            return (/(?:\b|_)(?:decrypt|key|pass|private|secret|token)/)
+            return (/(?:\b|_)(?:crypt|decrypt|key|pass|private|secret|token)/)
                 .test(key.toLowerCase()) ||
-                (/Decrypt|Key|Pass|Private|Secret|Token/).test(key);
+                (/Crypt|Decrypt|Key|Pass|Private|Secret|Token/).test(key);
         };
 
         local.envSanitize = function (env) {
@@ -15675,7 +15698,7 @@ instruction\n\
                         // jslint-hack
                         local.nop(error);
                         console.error('cli.customOrgStarFilterNotBuilt - fetched ' + xhr.url);
-                        (xhr.responseText || '').replace((
+                        (xhr.responseText || '').toLowerCase().replace((
                             /href=\"\/package\/(.+?)\"/g
                         ), function (match0, match1) {
                             match0 = local.env.GITHUB_ORG + '/node-' + local.env.GITHUB_ORG +
@@ -15684,27 +15707,36 @@ instruction\n\
                                 return;
                             }
                             onParallel.counter += 1;
-                            local.ajax({
+                            local.onParallelList({ list: [{
                                 url: 'https://raw.githubusercontent.com/' + match0 +
                                     '/gh-pages/build..alpha..travis-ci.org' +
                                     '/screenCapture.npmPackageListing.svg'
-                            }, function (error) {
-                                if (error) {
-                                    console.error('adding ' + match0);
-                                    options.dict[match0] = true;
-                                }
+                            }, {
+                                url: 'https://registry.npmjs.org/' + local.env.GITHUB_ORG +
+                                    '-' + match1
+                            }] }, function (options2, onParallel) {
+                                onParallel.counter += 1;
+                                local.ajax(options2.element, function (error) {
+                                    if (error && !options.dict[match0]) {
+                                        options.dict[match0] = true;
+                                        console.error(
+                                            'cli.customOrgStarFilterNotBuilt - not built - ' +
+                                                match0
+                                        );
+                                        console.log(match0);
+                                    }
+                                    onParallel();
+                                });
+                            }, function () {
                                 onParallel();
                             });
                         });
                         onParallel();
                     });
-                }, function () {
-                    console.log(Object.keys(options.dict).join('\n'));
-                    local.exit();
-                });
+                }, local.onErrorThrow);
             }());
             return;
-        case 'dbTableCustomOrgCrudGetManyByQuery':
+        case 'cli.dbTableCustomOrgCrudGetManyByQuery':
             local.dbTableCustomOrgCreate(JSON.parse(process.argv[3] || '{}'), function (error) {
                 // validate no error occurred
                 local.assert(!error, error);
@@ -15717,7 +15749,7 @@ instruction\n\
                     .join('\n'));
             });
             return;
-        case 'dbTableCustomOrgUpdate':
+        case 'cli.dbTableCustomOrgUpdate':
             local.dbTableCustomOrgUpdate(
                 JSON.parse(process.argv[3] || '{}'),
                 local.onErrorThrow
